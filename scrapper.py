@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import undetected_chromedriver as uc
 import json
 import time
@@ -8,7 +10,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-TIME_DELAY = 2
+TIME_DELAY = 3
 
 # Initialize undetected_chromedriver options
 options = uc.ChromeOptions()
@@ -35,38 +37,49 @@ try:
 except Exception as e:
     print("Error initializing undetected_chromedriver:", e)
     exit(1)
-
-def urlify(s):
-    """Sanitizes a string to be used as a filename or key."""
-    s = re.sub(r"[^\w\s]", '', s)  # Remove non-alphanumeric characters
-    return re.sub(r"\s+", '-', s)   # Replace whitespace with dashes
-
 def make_directory(path):
     """Creates a directory if it doesn't exist."""
     os.makedirs(path, exist_ok=True)
 
 def save_json(data, filename="leet_code_solutions.json"):
-    """Saves the given data to a JSON file."""
+    """Saves the given data to a JSON file and maintains a backup."""
+    backup_filename = f"backup_leetcode_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
+    if os.path.exists(filename):
+        os.rename(filename, backup_filename)
+
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
+
+def scroll_to_bottom():
+    """Scrolls to the bottom of the page to load all dynamically loaded content."""
+    last_height = CODE_DRIVER.execute_script("return document.body.scrollHeight")
+    while True:
+        CODE_DRIVER.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
+        new_height = CODE_DRIVER.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
+            break
+        last_height = new_height
 
 def scrape_code(problem_url):
     """Scrapes the accepted solution code from the problem's submissions page."""
     wait = WebDriverWait(CODE_DRIVER, 15)
     CODE_DRIVER.get(problem_url + "/submissions/")
-    CODE_DRIVER.implicitly_wait(TIME_DELAY)
+    time.sleep(TIME_DELAY)
+
     try:
-        # Wait for the "Accepted" link and click it
         solved_dropdown = wait.until(EC.element_to_be_clickable((By.LINK_TEXT, "Accepted")))
         solved_dropdown.click()
-        CODE_DRIVER.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(2)  # Additional delay to ensure dynamic content loads
-        lines = CODE_DRIVER.find_elements(By.CLASS_NAME, "ace_line_group")
-        code = "\n".join([line.text for line in lines])
-        return code.strip()
+        scroll_to_bottom()
+        time.sleep(2)
+
+        code_elements = CODE_DRIVER.find_elements(By.CLASS_NAME, "ace_line_group")
+        code = "\n".join([elem.text for elem in code_elements if elem.text])
+        return code.strip() if code else None
+
     except Exception as e:
         print(f"Error scraping {problem_url}: {e}")
-        return ""
+        return None
 
 def sign_into_leetcode_google():
     """Automates LeetCode login using Google."""
@@ -96,57 +109,75 @@ def sign_into_leetcode_google():
     except Exception as e:
         print("Google login failed:", e)
 
+
 def scrape_problems():
     """Scrapes LeetCode problems and accepted solutions, then saves them in a JSON file."""
     make_directory("./leet_code_solutions")
-    CODE_DRIVER.get("https://leetcode.com/problemset/algorithms/")
+    CODE_DRIVER.get("https://leetcode.com/problemset/")
     wait = WebDriverWait(CODE_DRIVER, 15)
     problems_data = {"problems": []}
-    try:
-        # Click to show solved problems (XPath may need updating if LeetCode changes its layout)
-        solved_dropdown = wait.until(EC.element_to_be_clickable(
-            (By.XPATH, '//*[@id="question-app"]/div/div[2]/div[2]/div/div[2]/div[4]')
-        ))
-        solved_dropdown.click()
 
-        all_dropdown = wait.until(EC.element_to_be_clickable(
-            (By.XPATH, '//*[@id="question-app"]/div/div[2]/div[2]/div/div[2]/div[4]/div/div/div/div[2]')
-        ))
-        all_dropdown.click()
+    while True:
+        time.sleep(TIME_DELAY)
+        scroll_to_bottom()  # Ensure all questions are loaded
 
-        table = CODE_DRIVER.find_element(By.CLASS_NAME, 'reactable-data')
-        problem_links = {}
-        for row in table.find_elements(By.TAG_NAME, "tr"):
-            try:
-                link_elem = row.find_element(By.TAG_NAME, "a")
-                title = link_elem.text
-                href = link_elem.get_attribute("href")
-                if title and href:
-                    problem_links[title] = href
-            except Exception:
-                continue
+        try:
+            row_groups_css_selector = '#__next > div.flex.min-h-screen.min-w-\[360px\].flex-col.text-label-1.dark\:text-dark-label-1 > div.mx-auto.w-full.grow.p-4.md\:max-w-\[888px\].md\:p-6.lg\:max-w-screen-xl.dark\:bg-dark-layer-bg.bg-white > div.grid.grid-cols-4.gap-4.md\:grid-cols-3.lg\:grid-cols-4.lg\:gap-6 > div.col-span-4.md\:col-span-2.lg\:col-span-3 > div:nth-child(4) > div.-mx-4.transition-opacity.md\:mx-0 > div > div > div:nth-child(2)'
+            row_group = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, row_groups_css_selector)))
 
-        for title, href in problem_links.items():
-            print(f"Scraping: {title}")
-            code = scrape_code(href)
-            if code:
-                problems_data["problems"].append({
-                    "title": title,
-                    "url": href,
-                    "solutions": {
-                        "Python": code
-                    }
-                })
-                print(f"Solution saved for: {title}")
-            else:
-                print(f"No solution found for: {title}")
+            rows = row_group.find_elements(By.XPATH, "./div")  # Each row represents a problem
 
-        save_json(problems_data)
-        print("All data saved to leet_code_solutions.json")
-    except Exception as e:
-        print("Error in scraping problems:", e)
+            for row in rows:
+                try:
+                    title_element = row.find_element(By.XPATH, './/a[contains(@href, "/problems/")]')
+                    title = title_element.text.strip()
+                    problem_url =  title_element.get_attribute("href")
+
+                    # ✅ Improved Difficulty Extraction
+                    difficulty_element = row.find_element(By.XPATH,
+                                                          './/span[contains(text(), "Easy") or contains(text(), "Medium") or contains(text(), "Hard")]')
+                    difficulty = difficulty_element.text.strip() if difficulty_element else "Unknown"
+
+                    accuracy_element = row.find_element(By.XPATH, './/div[@role="cell"][5]/span')
+                    accuracy = accuracy_element.text.strip() if accuracy_element else "Unknown"
+
+                    solution_link_elements = row.find_elements(By.XPATH, './/a[@aria-label="solution"]')
+                    solution_url = "https://leetcode.com" + solution_link_elements[0].get_attribute(
+                        "href") if solution_link_elements else None
+
+                    problems_data["problems"].append({
+                        "title": title,
+                        "difficulty": difficulty,
+                        "accuracy": accuracy,
+                        "problem_url": problem_url,
+                        "solution_url": solution_url
+                    })
+
+                    print(f"✅ Scraped: {title} - {difficulty} - {accuracy} - {problem_url}")
+                #     redirect to problem_url
+
+                except Exception as e:
+                    print("⚠️ Error extracting problem details:", e)
+
+        except Exception as e:
+            print("⚠️ Error loading problems:", e)
+
+        # # ✅ Updated Pagination Handling
+        # try:
+        #     next_button = wait.until(EC.presence_of_element_located((By.XPATH, '//button[@aria-label="next"]')))
+        #     if "bg-fill-3" in next_button.get_attribute("class"):  # Active button class
+        #         next_button.click()
+        #         time.sleep(3)  # Allow time for new data to load
+        #     else:
+        #         break  # No more pages left
+        # except Exception as e:
+        #     print("⚠️ No next button found or pagination error:", e)
+        #     break
+        break
+    save_json(problems_data)
+    print("🎉 Scraping completed! Data saved.")
 
 if __name__ == "__main__":
-    sign_into_leetcode_google()
+    # sign_into_leetcode_google()
     scrape_problems()
     CODE_DRIVER.quit()
