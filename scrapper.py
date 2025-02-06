@@ -5,6 +5,8 @@ import json
 import time
 import os
 import re
+
+from bs4 import BeautifulSoup
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
@@ -110,6 +112,86 @@ def sign_into_leetcode_google():
         print("Google login failed:", e)
 
 
+def fetch_problem_details(problem_url):
+    """Fetches the problem description and solution from a given LeetCode problem page."""
+    try:
+        # Open problem page
+        CODE_DRIVER.get(problem_url + "description/")
+        wait = WebDriverWait(CODE_DRIVER, 15)
+
+        try:
+            time.sleep(2)  # Allow time for the content to load
+            description_div = CODE_DRIVER.find_element(By.XPATH,
+                                                       "/html/body/div[1]/div[2]/div/div/div[4]/div/div/div[4]")
+            description_html = description_div.get_attribute("outerHTML")
+
+            # Parse HTML with BeautifulSoup
+            soup = BeautifulSoup(description_html, 'html.parser')
+
+            # Extract the text and image links
+            problem_description = soup.get_text(separator="\n").strip()  # Extracting text
+            images = soup.find_all('img')  # Finding all images in the description
+
+            # Process images: get their URLs and replace image elements in the text
+            for img in images:
+                img_url = img.get('src')
+                if img_url:
+                    print(f"Found image URL: {img_url}")  # Debugging: print the image URL
+                    # Replace the image with its URL in the text
+                    img['src'] = img_url
+                    problem_description = problem_description.replace(str(img), img_url)
+
+            print("Problem Description:\n", problem_description)  # Debugging output
+
+
+
+        except Exception as e:
+            print(f"⚠️ Unable to extract description: {e}")
+            problem_description = "Description not extracted yet"
+
+        try:
+
+            click_element = WebDriverWait(CODE_DRIVER, 10).until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "/html/body/div[1]/div[2]/div/div/div[4]/div/div/div[1]/div[1]/div[1]/div/div[5]"))
+            )
+            click_element.click()  # Click the element
+
+            print("Clicked the specified element.")
+            time.sleep(3)
+
+            solution_div = WebDriverWait(CODE_DRIVER, 15).until(
+                EC.element_to_be_clickable((By.XPATH,
+                                            "/html/body/div[1]/div[2]/div/div/div[4]/div/div/div[6]/div/div/div[3]/div[3]/div[1]/div[2]"))
+            )
+            solution_div.click()  # Click the first solution div
+            time.sleep(2)  # Wait for the solution to load
+            print("Solution here")
+            # Extract solution text
+            solution_div_text = CODE_DRIVER.find_element(By.XPATH,
+                                                         "/html/body/div[1]/div[2]/div/div/div[4]/div/div/div[6]/div[2]/div/div/div/div[2]/div/div[1]/div[2]")
+            code_elements = solution_div_text.find_elements(By.TAG_NAME, 'code')
+            solution_text =""
+            # Parse HTML with BeautifulSoup to get clean text
+            code_snippets = [element.text for element in code_elements]
+            if code_snippets:
+                for i, code in enumerate(code_snippets):
+                   solution_text +=f"Code Snippet {i + 1}:\n{code}\n---"
+
+
+
+
+        except Exception as e:
+            print(f"⚠️ Unable to extract solution: {e}")
+            solution_text = "Solution not extracted yet"
+
+        return problem_description, solution_text
+
+    except Exception as e:
+        print(f"⚠️ Error fetching details from {problem_url}: {e}")
+        return "Description not found", "Solution not found"
+
+
 def scrape_problems():
     """Scrapes LeetCode problems and accepted solutions, then saves them in a JSON file."""
     make_directory("./leet_code_solutions")
@@ -179,5 +261,6 @@ def scrape_problems():
 
 if __name__ == "__main__":
     # sign_into_leetcode_google()
-    scrape_problems()
+    # scrape_problems()
+    fetch_problem_details("https://leetcode.com/problems/merge-two-sorted-lists/")
     CODE_DRIVER.quit()
